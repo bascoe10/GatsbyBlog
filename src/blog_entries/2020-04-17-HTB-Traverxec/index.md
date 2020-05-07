@@ -2,6 +2,7 @@
 path: "/htb-traverxec"
 title: "Hack The Box - Traverxec"
 date: "04/17/2020"
+featuredImage: ../../images/traverxec.png
 ---
 
 You start off by doing a nmap scan to see what ports are opened. This will give you an idea of what you could potentially exploit.

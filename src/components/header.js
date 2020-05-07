@@ -12,7 +12,6 @@ const Header = ({ siteTitle }) => (
     <div
       style={{
         margin: `0 auto`,
-        maxWidth: 960,
         padding: `1.45rem 1.0875rem`,
       }}
     >
@@ -26,6 +25,9 @@ const Header = ({ siteTitle }) => (
         >
           {siteTitle}
         </Link>
+        <a href="http://abass.dev/" style={{ color: `white`, float: `right` }}>
+          Portfolio
+        </a>
       </h1>
     </div>
   </header>

@@ -2,6 +2,7 @@
 path: "/htb-postman"
 title: "Hack The Box - Postman"
 date: "03/23/2020"
+featuredImage: ../../images/postman.png
 ---
 
 You start off by doing a nmap scan to see what ports are opened. This will give you an idea of what you could potentially exploit.
