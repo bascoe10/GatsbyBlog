@@ -3,6 +3,7 @@ path: "/htb-openadmin"
 title: "Hack The Box - OpenAdmin"
 date: "02/12/2020"
 featuredImage: ../../images/openadmin.png
+tags: ["pentesting","hackthebox","linux"]
 ---
 # Nmap
 ```

@@ -1,5 +1,6 @@
 import React from "react"
 import { Link } from "gatsby"
+import { graphql } from "gatsby"
 
 import Layout from "../components/layout"
 import SEO from "../components/seo"
@@ -14,7 +15,7 @@ export default function IndexPage({ data }) {
         {data.allMarkdownRemark.edges.map(post => (
           <div key={post.node.id}>
             <h3>{post.node.frontmatter.title}</h3>
-            <Link to={post.node.frontmatter.path}>Read</Link>
+            <Link to={post.node.fields.slug}>Read</Link>
             <hr />
           </div>
         ))}
@@ -29,6 +30,9 @@ export const pageQuery = graphql`
       edges {
         node {
           id
+          fields {
+            slug
+          }
           frontmatter {
             path
             title

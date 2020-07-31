@@ -7,37 +7,76 @@
 // You can delete this file if you're not using it
 
 const path = require("path")
+const _ = require("lodash")
 
-exports.createPages = ({ boundActionCreators, graphql }) => {
-  const { createPage } = boundActionCreators
+const { createFilePath } = require(`gatsby-source-filesystem`)
+
+exports.onCreateNode = ({ node, getNode, actions }) => {
+  const { createNodeField } = actions
+  if (node.internal.type === `MarkdownRemark`) {
+    const slug = createFilePath({ node, getNode, basePath: `pages` })
+    createNodeField({
+      node,
+      name: `slug`,
+      value: slug,
+    })
+  }
+}
+
+exports.createPages = async ({ actions, graphql, reporter }) => {
+  const { createPage } = actions
 
   const blogTemplate = path.resolve("src/components/blog-entry.js")
+  const tagTemplate = path.resolve("src/templates/tags.js")
 
-  return graphql(`
+  const result = await graphql(`
     {
-      allMarkdownRemark {
+      postsRemark: allMarkdownRemark(
+        sort: { order: DESC, fields: [frontmatter___date] }
+        limit: 2000
+      ) {
         edges {
           node {
-            id
-            html
+            fields {
+              slug
+            }
             frontmatter {
-              path
-              title
+              tags
             }
           }
         }
       }
+      tagsGroup: allMarkdownRemark(limit: 2000) {
+        group(field: frontmatter___tags) {
+          fieldValue
+        }
+      }
     }
-  `).then(res => {
-    if (res.errors) {
-      return Promise.reject(res.errors)
-    }
+  `)
 
-    res.data.allMarkdownRemark.edges.forEach(({ node }) => {
-      createPage({
-        path: node.frontmatter.path,
-        component: blogTemplate,
-      })
+  // handle errors
+  if (result.errors) {
+    reporter.panicOnBuild(`Error while running GraphQL query.`)
+    return
+  }
+  const posts = result.data.postsRemark.edges
+  // Create post detail pages
+  posts.forEach(({ node }) => {
+    createPage({
+      path: node.fields.slug,
+      component: blogTemplate,
+    })
+  })
+  // Extract tag data from query
+  const tags = result.data.tagsGroup.group
+  //Make tag pages
+  tags.forEach(tag => {
+    createPage({
+      path: `/tags/${_.kebabCase(tag.fieldValue)}/`,
+      component: tagTemplate,
+      context: {
+        tag: tag.fieldValue,
+      },
     })
   })
 }
