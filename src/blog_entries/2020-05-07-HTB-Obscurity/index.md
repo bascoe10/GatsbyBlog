@@ -33,7 +33,7 @@ Web servers are usually riddled with vulnerabilities, hence port 8080 is a good 
 
 The tool gobuster can be used for enumerating the web server to find interesting endpoints; this yielded nothing. Reading through the content of the page that is hosted at port 8080, there is a message that states the filename of the web server (SuperSecureServer.py) and also implies that this file is publicly hosted in a “secret” directory.
 
-![HomePage](../../images/obscurity_homepage.gif)
+![HomePage](../../images/obscurity/homepage.gif)
 
 From the message on the site, the goal now is to fuzz the directory that might contain the file SuperSecureServer.py. The tool wfuzz can be leveraged for this.
 
